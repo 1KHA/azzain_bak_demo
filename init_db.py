@@ -308,3 +308,9 @@ def initialize_azzain_db():
     db.session.commit()
 
     logger.success("All data added to the database")
+
+
+if __name__ == "__main__":
+    from app import app
+    with app.app_context():
+        initialize_azzain_db()
