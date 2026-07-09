@@ -192,3 +192,4 @@ checkpoints/
 db_export/
 .md
 *.md
+/mdfiles
