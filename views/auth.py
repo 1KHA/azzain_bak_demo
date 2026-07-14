@@ -214,8 +214,57 @@ class GetUserAgeGroup(Resource):
 class GetUserBudget(Resource):
     def get(self):
         """
-        Get all budget 
+        Get all budget
         """
         user_budgets = AuthQuery.get_all_budgets(db)
 
         return BaseResponse.success(user_budgets)
+
+COUNTRIES_DATA = {
+    "Saudi Arabia": ["Riyadh", "Jeddah", "Mecca", "Medina", "Dammam", "Khobar", "Dhahran", "Taif", "Tabuk", "Abha", "Khamis Mushait", "Qatif", "Jubail", "Hail", "Najran", "Yanbu", "Al Ahsa", "Buraidah"],
+    "United Arab Emirates": ["Dubai", "Abu Dhabi", "Sharjah", "Ajman", "Ras Al Khaimah", "Fujairah", "Umm Al Quwain", "Al Ain"],
+    "Kuwait": ["Kuwait City", "Hawalli", "Salmiya", "Farwaniya", "Ahmadi", "Jahra"],
+    "Qatar": ["Doha", "Al Rayyan", "Al Wakrah", "Al Khor", "Dukhan"],
+    "Bahrain": ["Manama", "Riffa", "Muharraq", "Hamad Town", "Isa Town", "Sitra"],
+    "Oman": ["Muscat", "Salalah", "Sohar", "Nizwa", "Sur", "Ibri"],
+    "Egypt": ["Cairo", "Alexandria", "Giza", "Shubra El Kheima", "Port Said", "Suez", "Luxor", "Aswan", "Hurghada"],
+    "Jordan": ["Amman", "Zarqa", "Irbid", "Russeifa", "Aqaba", "Salt"],
+    "Lebanon": ["Beirut", "Tripoli", "Sidon", "Tyre", "Jounieh"],
+    "Iraq": ["Baghdad", "Basra", "Mosul", "Erbil", "Sulaymaniyah", "Najaf", "Karbala"],
+    "United Kingdom": ["London", "Birmingham", "Manchester", "Leeds", "Glasgow", "Liverpool", "Bristol", "Edinburgh"],
+    "United States": ["New York", "Los Angeles", "Chicago", "Houston", "Phoenix", "Philadelphia", "San Antonio", "San Diego", "Dallas", "San Jose"],
+    "France": ["Paris", "Marseille", "Lyon", "Toulouse", "Nice", "Nantes", "Strasbourg"],
+    "Germany": ["Berlin", "Hamburg", "Munich", "Cologne", "Frankfurt", "Stuttgart", "Düsseldorf"],
+    "Turkey": ["Istanbul", "Ankara", "Izmir", "Bursa", "Antalya", "Adana", "Konya"],
+    "Pakistan": ["Karachi", "Lahore", "Islamabad", "Rawalpindi", "Faisalabad", "Multan", "Peshawar"],
+    "India": ["Mumbai", "Delhi", "Bangalore", "Hyderabad", "Ahmedabad", "Chennai", "Kolkata", "Pune"],
+    "Canada": ["Toronto", "Montreal", "Vancouver", "Calgary", "Edmonton", "Ottawa", "Winnipeg"],
+    "Australia": ["Sydney", "Melbourne", "Brisbane", "Perth", "Adelaide", "Gold Coast"],
+}
+
+@auth_api.route('/countries')
+class GetCountries(Resource):
+    def get(self):
+        """
+        Get list of all available countries
+        """
+        countries = sorted(COUNTRIES_DATA.keys())
+        return BaseResponse.success(countries)
+
+@auth_api.route('/cities')
+class GetCities(Resource):
+    def get(self):
+        """
+        Get list of cities for a given country (?country=Saudi Arabia)
+        """
+        country = request.args.get('country', None, type=str)
+
+        if not country:
+            return BaseResponse.bad_request(1011, "country query parameter is required")
+
+        cities = COUNTRIES_DATA.get(country)
+
+        if cities is None:
+            return BaseResponse.not_found(1005, f"No cities found for country: {country}")
+
+        return BaseResponse.success(sorted(cities))
