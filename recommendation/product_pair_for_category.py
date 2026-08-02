@@ -116,6 +116,7 @@ The JSON string should be valid and properly formatted to allow for JSON parsing
 """
     )
 
+    description_list = []
     retries = 0
     while retries < MAX_RETRIES:
 

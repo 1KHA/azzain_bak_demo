@@ -100,6 +100,7 @@ def get_description_list(user_input: Dict, product_id: str) -> List[str]:
     response = requests.get(image_link, headers=CUSTOM_HEADERS)
     image = PIL.Image.open(BytesIO(response.content))
 
+    description_list = []
     retries = 0
     while retries < MAX_RETRIES:
         try:

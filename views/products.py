@@ -226,6 +226,50 @@ class GetProductData(Resource):
             )
 
 
+@products_api.route("/get-data-by-category")
+class GetDataByCategory(Resource):
+    @login_required
+    def get(self):
+        """
+        Get paginated products for one category, by name or id
+        """
+        page = request.args.get("page", 1, type=int)
+        limit = request.args.get("limit", 10, type=int)
+        category_param = request.args.get("category", None, type=str)
+
+        if not category_param or category_param.lower() in ("undefined", "null"):
+            logger.error("Invalid category name provided")
+            return BaseResponse.bad_request(1006, error_codes[1006])
+
+        if category_param.isdigit():
+            category = Category.query.get(int(category_param))
+        else:
+            category = Category.query.filter(
+                func.lower(Category.name) == category_param.lower()
+            ).first()
+
+        if category is None:
+            logger.error("Invalid category name provided")
+            return BaseResponse.bad_request(1006, error_codes[1006])
+
+        products_data, count = ProductQuery.get_all_lisiting_products(
+            db, None, None, None, [category.id], None, None, {}, page, limit,
+        )
+        updated_products = ProductQuery.check_cart(db, products_data)
+
+        if len(products_data) == 0:
+            return BaseResponse.not_found(1023, error_codes[1023])
+
+        return BaseResponse.success(
+            {
+                "product_data": updated_products,
+                "page": page,
+                "limit": limit,
+                "count": count,
+            }
+        )
+
+
 # like the product
 @products_api.route("/like")
 class likeProduct(Resource):

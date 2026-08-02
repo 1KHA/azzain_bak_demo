@@ -1,8 +1,11 @@
 import os
+import re
+import base64
+from io import BytesIO
 from typing import List, Dict, Any
+import requests as _requests
 from qdrant_client import QdrantClient, models
 from sentence_transformers import SentenceTransformer
-import google.generativeai as genai
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -10,10 +13,8 @@ MAX_RETRIES = 5
 NUM_RECOMMENDED_PRODUCTS = 10
 NUM_RECOMMENDED_PAIR = 12
 
-# QDRANT_CLIENT_URL = "http://localhost:6333" 
-QDRANT_CLIENT_URL = "https://5d044d5b-ea48-4e2f-b33c-56c5c1383ab0.europe-west3-0.gcp.cloud.qdrant.io"
-QDRANT_API = os.environ['QDRANT_API_KEY']
-GOOGLE_API_KEY = os.environ['GOOGLE_API_KEY']
+QDRANT_CLIENT_URL = os.getenv("QDRANT_CLIENT_URL", "http://localhost:6333")
+QDRANT_API = os.getenv('QDRANT_API_KEY')
 
 COLLECTION_NAME = 'ProductCollection'
 CATEGORY_LIST = ['topwear', 'bottomwear', 'footwear', 'outwear', 'accesories']
@@ -25,10 +26,53 @@ PAIR_CATEGORY_PARAMS = {'Buisness Meeting' : 'Modesty Level Should be High and S
 
 PAIR_CATEGORIES = list(PAIR_CATEGORY_PARAMS.keys())
 
-# loading gemini models :
-genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
-gemini_pro_vision = genai.GenerativeModel('gemini-pro-vision')
-gemini_pro = genai.GenerativeModel('gemini-pro')
+# LM Studio (OpenAI-compatible local API) replaces Google Gemini.
+# Exposes the same generate_content(...).text interface the Gemini call
+# sites use, so the rest of the recommendation code is unchanged.
+LMSTUDIO_BASE_URL = os.getenv("LMSTUDIO_BASE_URL", "http://localhost:1234/v1")
+# must be a non-reasoning model: reasoning models (qwen3.6 etc.) spend the
+# whole 4096-token LM Studio context window thinking and return empty content
+LMSTUDIO_MODEL = os.getenv("LMSTUDIO_MODEL", "qwen/qwen3-coder-30b")
+
+
+class _LMStudioResponse:
+    def __init__(self, text: str):
+        # strip reasoning blocks some local models emit before the answer
+        self.text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+
+    def resolve(self):
+        pass
+
+
+class LMStudioModel:
+    def __init__(self, model: str = LMSTUDIO_MODEL):
+        self.model = model
+
+    def generate_content(self, prompt, stream=False):
+        parts = prompt if isinstance(prompt, (list, tuple)) else [prompt]
+        content = []
+        for part in parts:
+            if isinstance(part, str):
+                content.append({"type": "text", "text": part})
+            else:  # PIL image (gemini-pro-vision call sites pass [prompt, image])
+                buf = BytesIO()
+                part.save(buf, format="PNG")
+                b64 = base64.b64encode(buf.getvalue()).decode()
+                content.append({"type": "image_url",
+                                "image_url": {"url": f"data:image/png;base64,{b64}"}})
+
+        response = _requests.post(
+            f"{LMSTUDIO_BASE_URL}/chat/completions",
+            json={"model": self.model,
+                  "messages": [{"role": "user", "content": content}],
+                  "temperature": 0.7},
+            timeout=300)
+        response.raise_for_status()
+        return _LMStudioResponse(response.json()["choices"][0]["message"]["content"])
+
+
+gemini_pro_vision = LMStudioModel()
+gemini_pro = LMStudioModel()
 
 
 CUSTOM_HEADERS = {
@@ -36,8 +80,11 @@ CUSTOM_HEADERS = {
     'accept-language': 'en-GB,en;q=0.9',
 }
 
-client = QdrantClient(url=QDRANT_CLIENT_URL, api_key=QDRANT_API)
-# client = QdrantClient(url=QDRANT_CLIENT_URL)
+# local Qdrant needs no API key; only pass one for a remote https cluster
+if QDRANT_CLIENT_URL.startswith("https"):
+    client = QdrantClient(url=QDRANT_CLIENT_URL, api_key=QDRANT_API)
+else:
+    client = QdrantClient(url=QDRANT_CLIENT_URL)
 
 # load embedding model
 checkpoint = 'sentence-transformers/all-MiniLM-L6-v2'

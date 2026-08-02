@@ -81,6 +81,7 @@ def get_description_list(user_input: dict) -> List[str]:
         --make sure u only provide the json string in output don't provide any extra other thing or text.. just json_strigng...
         '''
 
+    description_list = []
     retries = 0
     while retries < MAX_RETRIES:
 
