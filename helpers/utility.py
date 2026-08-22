@@ -206,22 +206,29 @@ def insert_collection_item_in_db():
     accesories_dataset = Products.query.filter_by(category_id = 4).all()
     collection_data = CollectionName.query.all()
 
-    for i in range(30):
-        top_wear_uuid = random.choice(top_wear_dataset).product_uuid
-        bottom_wear_uuid = random.choice(bottom_wear_dataset).product_uuid
-        foot_wear_uuid = random.choice(foot_wear_dataset).product_uuid
-        accesories_uuid = random.choice(accesories_dataset).product_uuid
-        collection_id = random.choice(collection_data).id
+    # every collection gets its own items so no tab ends up empty
+    for collection in collection_data:
+        for i in range(6):
+            top_wear = random.choice(top_wear_dataset)
+            bottom_wear = random.choice(bottom_wear_dataset)
+            foot_wear = random.choice(foot_wear_dataset)
+            accesories = random.choice(accesories_dataset)
 
-        collection_item_obj = CollectionItems(
-            collection_id = collection_id,
-            topwear_uuid = top_wear_uuid,
-            bottom_wear_uuid = bottom_wear_uuid,
-            foot_wear_uuid = foot_wear_uuid,
-            accessories_uuid = accesories_uuid
-        )
-        db.session.add(collection_item_obj)
-        logger.debug("added")
+            total_price = int(sum(
+                p.price or 0
+                for p in (top_wear, bottom_wear, foot_wear, accesories)))
+
+            collection_item_obj = CollectionItems(
+                collection_id = collection.id,
+                topwear_uuid = top_wear.product_uuid,
+                bottom_wear_uuid = bottom_wear.product_uuid,
+                foot_wear_uuid = foot_wear.product_uuid,
+                accessories_uuid = accesories.product_uuid,
+                price = total_price,
+                currency = 'SAR'
+            )
+            db.session.add(collection_item_obj)
+            logger.debug("added")
 
     logger.debug("Collection Items inserted successfully")
     db.session.commit()

@@ -14,7 +14,7 @@ from models.user_search import UserSearch
 from models.usercart import UserCart, UserCartSchema
 from models.collection_name import CollectionName, CollectionNameSchema
 from models.collection_items import CollectionItems, CollectionItemsSchema
-from sqlalchemy import case, literal, and_, func
+from sqlalchemy import case, literal, and_, or_, func
 from responses import BaseResponse
 from helpers.error_codes import error_codes
 from datetime import datetime
@@ -479,7 +479,8 @@ class ProductQuery:
     @staticmethod
     def get_collection_name_and_id(db):
         collection_data = CollectionName.query.filter(
-            CollectionName.is_generic.in_([False, None])
+            or_(CollectionName.is_generic.is_(False),
+                CollectionName.is_generic.is_(None))
         ).all()
         data = CollectionNameSchema(many=True).dump(collection_data)
         return data
