@@ -58,6 +58,7 @@ from recommendation.recent_search import (
 from recommendation.user_demographics_and_likes_specific import (
     get_recommendation_by_user_demographics,
 )
+from helpers.demo import DEMO_MODE, demo_recos, demo_gender_key
 from recommendation.good_fit_for_this_cloths import (
     get_good_fit_products_for_selected_product,
 )
@@ -587,7 +588,11 @@ class DemographicsRecommendation(Resource):
 
         user_data = get_user_data(user_id=g.user.id)
 
-        recommended_products = get_recommendation_by_user_demographics(user_data)
+        if DEMO_MODE:
+            recommended_products = demo_recos()[
+                demo_gender_key(user_data.get("gender"))]["demographics"]
+        else:
+            recommended_products = get_recommendation_by_user_demographics(user_data)
 
         # Start query with join
         products = (
@@ -654,9 +659,14 @@ class GoodFit(Resource):
         user_data = get_user_data(user_id=g.user.id)
         product_uuid = product.product_uuid
 
-        good_fit_items, cat_list = get_good_fit_products_for_selected_product(
-            user_data, str(product_uuid)
-        )
+        if DEMO_MODE:
+            recos = demo_recos()
+            good_fit_items = recos["good_fit"].get(str(product_uuid)) or recos[
+                demo_gender_key(user_data.get("gender"))]["demographics"][:6]
+        else:
+            good_fit_items, cat_list = get_good_fit_products_for_selected_product(
+                user_data, str(product_uuid)
+            )
         logger.info(f"Good Fit API called: {product_id}")
 
         products = (
