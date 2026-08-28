@@ -1,4 +1,7 @@
+import random
+
 from models import CollectionItems, CollectionName, Products
+from helpers.utility import pick_accessory
 from request_parsers.products import CollectionCreateRequest, CollectionCreateResponse
 from database import db
 from recommendation.product_pair_for_category import get_pair_from_category
@@ -31,7 +34,7 @@ class CollectionQuery:
             name_ar=collection_data.name_ar,
             img_url=collection_data.img_url,
             user_id=user_data["id"],
-            is_generic=False,
+            is_generic=is_generic,
         )
         db.session.add(new_collection)
         db.session.flush()
@@ -86,6 +89,10 @@ class CollectionQuery:
             [i.description for i in fav_footwear_descriptions]
         )
 
+        board_gender = {"male": "men", "female": "women"}.get(
+            str(user_data.get("gender", "")).lower(), "unisex")
+        used_accessories = set()
+
         # Get the pair of items for the category
         for cd in category_data:
             collection_item_data, _ = get_pair_from_category(user_data, cd)
@@ -104,11 +111,19 @@ class CollectionQuery:
                     else:
                         total_price += p.price
 
+                # the pair generator only returns three garments; the board's
+                # fourth slot would stay empty in the app without this
+                accessory = pick_accessory(board_gender, exclude=used_accessories)
+                if accessory is not None:
+                    used_accessories.add(accessory.product_uuid)
+
                 new_collection_item = CollectionItems(
                     collection_id=new_collection.id,
                     topwear_uuid=item["topwear"],
                     bottom_wear_uuid=item["bottomwear"],
                     foot_wear_uuid=item["footwear"],
+                    accessories_uuid=accessory.product_uuid if accessory else None,
+                    gender=board_gender,
                     formal= True if cd["sub_category_name"] == "formal" else False,
                     currency="SAR",
                     price=total_price,

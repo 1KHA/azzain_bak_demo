@@ -198,7 +198,7 @@ def get_product_detail_by_uuid(product_uuid: str) -> dict:
         Products.product_id.label('product_id'),
         Products.name.label('name'),
         Products.description.label('description'),
-        Products.name_ar.label('label'),
+        Products.name_ar.label('name_ar'),
         Products.description_ar.label('description_ar'),
         Products.price.label('price'),
         Products.currency.label('currency'),

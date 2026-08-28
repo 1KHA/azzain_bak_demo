@@ -464,7 +464,7 @@ class SimilarItems(Resource):
                 Products.product_id.label("product_id"),
                 Products.name.label("name"),
                 Products.description.label("description"),
-                Products.name_ar.label("label"),
+                Products.name_ar.label("name_ar"),
                 Products.description_ar.label("description_ar"),
                 Products.price.label("price"),
                 Products.currency.label("currency"),
@@ -535,7 +535,7 @@ class RecentSearch(Resource):
                 Products.product_id.label("product_id"),
                 Products.name.label("name"),
                 Products.description.label("description"),
-                Products.name_ar.label("label"),
+                Products.name_ar.label("name_ar"),
                 Products.description_ar.label("description_ar"),
                 Products.price.label("price"),
                 Products.currency.label("currency"),
@@ -601,7 +601,7 @@ class DemographicsRecommendation(Resource):
                 Products.product_id.label("product_id"),
                 Products.name.label("name"),
                 Products.description.label("description"),
-                Products.name_ar.label("label"),
+                Products.name_ar.label("name_ar"),
                 Products.description_ar.label("description_ar"),
                 Products.price.label("price"),
                 Products.currency.label("currency"),
@@ -675,7 +675,7 @@ class GoodFit(Resource):
                 Products.product_id.label("product_id"),
                 Products.name.label("name"),
                 Products.description.label("description"),
-                Products.name_ar.label("label"),
+                Products.name_ar.label("name_ar"),
                 Products.description_ar.label("description_ar"),
                 Products.price.label("price"),
                 Products.currency.label("currency"),
@@ -775,9 +775,7 @@ class GetCollectionByCategory(Resource):
             "formal",
             "informal",
         ]:
-            return BaseResponse.bad_request(
-                1044, "Invalid value for formal filter. Must be 'formal' or 'informal'."
-            )
+            return BaseResponse.bad_request(1046, error_codes[1046])
 
         formal_filter_bool = None
         if formal_filter is not None:

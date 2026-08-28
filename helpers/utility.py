@@ -4,7 +4,9 @@ from models import (
     Category, SubCategory, ProductBestFor,CollectionName,CollectionItems
 )
 import json
+import os
 from logger import logger
+from sqlalchemy import func, text
 import pandas as pd
 import uuid
 import random
@@ -198,37 +200,112 @@ def insert_collections_in_db():
     db.session.commit()
 
 
-def insert_collection_item_in_db():
+# Which product categories may fill each board slot. Resolved by NAME because
+# category ids differ between the dev seed and the demo server.
+SLOT_CATEGORIES = {
+    "topwear": ["topwear", "outwear"],   # a jacket/coat is a valid hero piece
+    "bottom_wear": ["bottomwear"],
+    "foot_wear": ["footwear"],
+    "accessories": ["accesories"],       # the table really is spelled this way
+}
+BOARD_GENDERS = ("men", "women")
+BOARDS_PER_GENDER = 6
+# Fixed seed: re-running the seeder reproduces the same lookbook.
+BOARD_SEED = 20260828
 
-    top_wear_dataset = Products.query.filter_by(category_id = 2).all()
-    bottom_wear_dataset = Products.query.filter_by(category_id = 3).all()
-    foot_wear_dataset = Products.query.filter_by(category_id = 6).all()
-    accesories_dataset = Products.query.filter_by(category_id = 4).all()
-    collection_data = CollectionName.query.all()
 
-    # every collection gets its own items so no tab ends up empty
-    for collection in collection_data:
-        for i in range(6):
-            top_wear = random.choice(top_wear_dataset)
-            bottom_wear = random.choice(bottom_wear_dataset)
-            foot_wear = random.choice(foot_wear_dataset)
-            accesories = random.choice(accesories_dataset)
+def _slot_pool(slot, gender, demo_only):
+    """Board-eligible products for one slot and gender.
 
-            total_price = int(sum(
-                p.price or 0
-                for p in (top_wear, bottom_wear, foot_wear, accesories)))
+    Eligibility follows the boards spec: right category for the slot, a real
+    gender tag (the product's own gender or unisex — never child/Other/NULL),
+    and at least one image so no tile renders empty.
+    """
+    query = (
+        Products.query
+        .join(Category, Products.category_id == Category.id)
+        .join(ProductBestFor, Products.best_for_id == ProductBestFor.id)
+        .filter(Category.name.in_(SLOT_CATEGORIES[slot]),
+                ProductBestFor.name.in_([gender, "unisex"]),
+                Products.image_urls.isnot(None),
+                func.array_length(Products.image_urls, 1) > 0)
+    )
+    if demo_only:
+        # demo build: only products whose images are served locally.
+        # image_urls_original is created by prepare_demo.py and kept off the
+        # model on purpose, so it is referenced as raw SQL here.
+        query = query.filter(text("products.image_urls_original IS NOT NULL"))
+    return query.order_by(Products.id.asc()).all()
 
-            collection_item_obj = CollectionItems(
-                collection_id = collection.id,
-                topwear_uuid = top_wear.product_uuid,
-                bottom_wear_uuid = bottom_wear.product_uuid,
-                foot_wear_uuid = foot_wear.product_uuid,
-                accessories_uuid = accesories.product_uuid,
-                price = total_price,
-                currency = 'SAR'
-            )
-            db.session.add(collection_item_obj)
-            logger.debug("added")
 
-    logger.debug("Collection Items inserted successfully")
+def pick_accessory(gender, exclude=None):
+    """One board-eligible accessory for this gender, or None if there is none."""
+    pool = [p for p in _slot_pool("accessories", gender,
+                                  os.getenv("DEMO_MODE") == "1")
+            if p.product_uuid not in (exclude or set())]
+    return random.choice(pool) if pool else None
+
+
+def insert_collection_item_in_db(demo_only=None):
+    """Build 'Made for you' outfit boards: every collection x gender.
+
+    Each board carries all four slots, filled with products of the matching
+    gender and the correct category, and no product repeats inside one
+    collection so the lookbook does not feel duplicated.
+    """
+    if demo_only is None:
+        demo_only = os.getenv("DEMO_MODE") == "1"
+
+    # Template collections only — boards a user built for themselves are left
+    # untouched.
+    collections = (CollectionName.query
+                   .filter(CollectionName.user_id.is_(None))
+                   .order_by(CollectionName.id).all())
+    ids = [c.id for c in collections]
+    if ids:
+        CollectionItems.query.filter(
+            CollectionItems.collection_id.in_(ids)).delete(
+                synchronize_session=False)
+
+    rng = random.Random(BOARD_SEED)
+    created = skipped = 0
+
+    for collection in collections:
+        formal = collection.name.strip().lower() == "formal"
+        for gender in BOARD_GENDERS:
+            pools = {slot: _slot_pool(slot, gender, demo_only)
+                     for slot in SLOT_CATEGORIES}
+            used = set()          # no product twice within one collection
+
+            for _ in range(BOARDS_PER_GENDER):
+                board = {}
+                for slot in ("topwear", "bottom_wear", "foot_wear", "accessories"):
+                    choices = [p for p in pools[slot] if p.product_uuid not in used]
+                    if not choices:
+                        board = None
+                        break
+                    pick = rng.choice(choices)
+                    used.add(pick.product_uuid)
+                    board[slot] = pick
+
+                if not board:
+                    skipped += 1
+                    continue
+
+                db.session.add(CollectionItems(
+                    collection_id=collection.id,
+                    gender=gender,
+                    topwear_uuid=board["topwear"].product_uuid,
+                    bottom_wear_uuid=board["bottom_wear"].product_uuid,
+                    foot_wear_uuid=board["foot_wear"].product_uuid,
+                    accessories_uuid=board["accessories"].product_uuid,
+                    formal=formal,
+                    price=int(sum(p.price or 0 for p in board.values())),
+                    currency="SAR",
+                ))
+                created += 1
+
     db.session.commit()
+    logger.debug(f"Collection boards inserted: {created} created, "
+                 f"{skipped} skipped for lack of eligible products")
+    return created, skipped

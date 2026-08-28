@@ -14,10 +14,26 @@ from models.user_search import UserSearch
 from models.usercart import UserCart, UserCartSchema
 from models.collection_name import CollectionName, CollectionNameSchema
 from models.collection_items import CollectionItems, CollectionItemsSchema
+from models.user_preference import UserPreference
+from models.cloth_color import ClothColor
+from models.user_budget import UserBudget
 from sqlalchemy import case, literal, and_, or_, func
 from responses import BaseResponse
 from helpers.error_codes import error_codes
 from datetime import datetime
+from hashlib import md5
+
+# users.gender (GenderEnum) -> collection_items.gender
+GENDER_TO_BOARD = {"Male": "men", "Female": "women"}
+
+# Budget bands are per garment; a board holds four, so the cap is x4.
+# Used only to order boards, never to hide them.
+BUDGET_CAPS = {
+    "Less than 100 riyals": 400,
+    "From 100 to 300 riyals": 1200,
+    "From 300 to 500 riyals": 2000,
+    "More than 500 riyals": None,
+}
 
 
 class ProductQuery:
@@ -104,7 +120,7 @@ class ProductQuery:
                 Products.product_id.label("product_id"),
                 Products.name.label("name"),
                 Products.description.label("description"),
-                Products.name_ar.label("label"),
+                Products.name_ar.label("name_ar"),
                 Products.description_ar.label("description_ar"),
                 Products.price.label("price"),
                 Products.currency.label("currency"),
@@ -226,7 +242,7 @@ class ProductQuery:
                 Products.product_id.label("product_id"),
                 Products.name.label("name"),
                 Products.description.label("description"),
-                Products.name_ar.label("label"),
+                Products.name_ar.label("name_ar"),
                 Products.description_ar.label("description_ar"),
                 Products.price.label("price"),
                 Products.currency.label("currency"),
@@ -428,7 +444,7 @@ class ProductQuery:
                 Products.product_id.label("product_id"),
                 Products.name.label("name"),
                 Products.description.label("description"),
-                Products.name_ar.label("label"),
+                Products.name_ar.label("name_ar"),
                 Products.description_ar.label("description_ar"),
                 Products.price.label("price"),
                 Products.currency.label("currency"),
@@ -487,11 +503,86 @@ class ProductQuery:
 
     @staticmethod
     def get_collection_by_category(db, filter_data, formal_filter):
+        """Outfit boards for one collection, personalised for the caller.
+
+        Boards of the wrong gender are filtered out; the rest are ordered so
+        the ones matching the user's colour palette and budget come first,
+        with a per-user tie-break so two users never get the same lookbook
+        in the same order.
+        """
         query = CollectionItems.query
         if filter_data is not None:
             query = query.filter_by(collection_id=filter_data)
         if formal_filter is not None:
             query = query.filter_by(formal=formal_filter)
+
+        user = getattr(g, "user", None)
+        board_gender = GENDER_TO_BOARD.get(
+            user.gender.value if user is not None and user.gender else None)
+        if board_gender:
+            query = query.filter(
+                CollectionItems.gender.in_([board_gender, "unisex"]))
+
         collection_data = query.all()
+        collection_data = ProductQuery.rank_boards_for_user(collection_data, user)
         data = CollectionItemsSchema(many=True).dump(collection_data)
         return data
+
+    @staticmethod
+    def preferred_color_ids(user):
+        """Product colours implied by the user's chosen clothing palettes.
+
+        A palette is stored as hex values plus a description such as
+        "Cal Poly Pomona Green, Medium Aquamarine, Teal Deer"; a product colour
+        counts as preferred when its name appears in that text.
+        """
+        if user is None:
+            return set()
+        preference = (UserPreference.query
+                      .filter_by(user_id=user.id)
+                      .order_by(UserPreference.id.desc()).first())
+        if preference is None or not preference.cloth_color_id:
+            return set()
+
+        palettes = ClothColor.query.filter(
+            ClothColor.id.in_(preference.cloth_color_id)).all()
+        wanted = " ".join((p.description or "").lower() for p in palettes)
+        if not wanted:
+            return set()
+        return {c.id for c in ProductColor.query.all()
+                if c.name and c.name.lower() in wanted}
+
+    @staticmethod
+    def rank_boards_for_user(boards, user):
+        if not boards:
+            return boards
+
+        colors = ProductQuery.preferred_color_ids(user)
+        budget_cap = None
+        if user is not None and user.user_budget_id:
+            budget = UserBudget.query.get(user.user_budget_id)
+            budget_cap = BUDGET_CAPS.get(getattr(budget, "name", None))
+
+        uuids = {u for b in boards for u in (
+            b.topwear_uuid, b.bottom_wear_uuid,
+            b.foot_wear_uuid, b.accessories_uuid) if u}
+        garments = {
+            p.product_uuid: p for p in Products.query.filter(
+                Products.product_uuid.in_(uuids)).all()} if uuids else {}
+
+        seed = user.id if user is not None else 0
+
+        def score(board):
+            picks = [garments.get(u) for u in (
+                board.topwear_uuid, board.bottom_wear_uuid,
+                board.foot_wear_uuid, board.accessories_uuid)]
+            color_hits = sum(
+                1 for p in picks
+                if p is not None and colors.intersection(p.colors or []))
+            in_budget = (budget_cap is not None
+                         and (board.price or 0) <= budget_cap)
+            # stable per-user shuffle so the lookbook feels individual
+            jitter = md5(f"{seed}:{board.id}".encode()).hexdigest()
+            return (-color_hits, 0 if in_budget else 1, jitter)
+
+        return sorted(boards, key=score)

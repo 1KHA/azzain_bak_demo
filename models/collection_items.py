@@ -14,6 +14,10 @@ class CollectionItems(db.Model):
     price = db.Column(db.Integer)
     currency = db.Column(db.String)
     formal = db.Column(db.Boolean,default=False)
+    # 'men' | 'women' | 'unisex' — every garment on the board matches it,
+    # so boards can be filtered for the logged-in user without four joins.
+    gender = db.Column(db.String(10), nullable=False,
+                       server_default='unisex', default='unisex')
     created_at = db.Column(db.TIMESTAMP, nullable=False,
                            default=datetime.utcnow)
     updated_at = db.Column(db.TIMESTAMP, nullable=False,
@@ -21,5 +25,5 @@ class CollectionItems(db.Model):
     
 class CollectionItemsSchema(ma.Schema):
     class Meta:
-        fields = ('id','collection_id','topwear_uuid','bottom_wear_uuid','foot_wear_uuid','accessories_uuid', 'formal', 'currency', 'price')
+        fields = ('id','collection_id','topwear_uuid','bottom_wear_uuid','foot_wear_uuid','accessories_uuid', 'formal', 'currency', 'price', 'gender')
         model = CollectionItems

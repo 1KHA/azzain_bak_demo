@@ -43,5 +43,6 @@ error_codes = {
     1042: "Product not found or not available for tryon",
     1043: "No Product Found",
     1044: "User budget id is not present",
-    1045: "Failed to download image"
+    1045: "Failed to download image",
+    1046: "Invalid value for formal filter. Must be 'formal' or 'informal'"
 }

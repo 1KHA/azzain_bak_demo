@@ -32,12 +32,17 @@ from models.product_best_for import ProductBestFor
 from models.product_brand import ProductBrand
 from models.collection_name import CollectionName
 from models.collection_items import CollectionItems
+from helpers.utility import insert_collection_item_in_db
+from helpers.arabic_names import arabic_product_name
 
 UA = {'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
                     'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36'}
 DEMO_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "demo")
 BRANDS = ("TOM FORD", "VALENTINO")
-QUOTA = {"topwear": 6, "bottomwear": 5, "footwear": 4, "outwear": 3, "accesories": 2}
+# Per gender, per category. Sized so every collection can hold 6 outfit boards
+# per gender without repeating a product inside one collection: the hero slot
+# draws from topwear+outwear, the other three slots need >= 6 each.
+QUOTA = {"topwear": 8, "bottomwear": 6, "footwear": 6, "outwear": 4, "accesories": 6}
 IMAGES_PER_PRODUCT = 3
 MAX_SIDE = 600
 
@@ -171,32 +176,27 @@ def rewrite_urls(product, base_url, count):
         for n in range(1, count + 1)]
 
 
-def reseed_collections(selected):
-    """Deterministic outfits: 3 per gender per collection, demo products only."""
-    CollectionItems.query.delete()
-    collections = CollectionName.query.order_by(CollectionName.id).all()
-    for ci, coll in enumerate(collections):
-        for gender in ("men", "women"):
-            g = selected[gender]
-            tops, bottoms, feet, accs = (g["topwear"], g["bottomwear"],
-                                         g["footwear"], g["accesories"])
-            for oi in range(3):
-                k = ci * 3 + oi
-                top = tops[k % len(tops)]
-                bottom = bottoms[k % len(bottoms)]
-                foot = feet[k % len(feet)]
-                acc = accs[k % len(accs)]
-                db.session.add(CollectionItems(
-                    collection_id=coll.id,
-                    topwear_uuid=top.product_uuid,
-                    bottom_wear_uuid=bottom.product_uuid,
-                    foot_wear_uuid=foot.product_uuid,
-                    accessories_uuid=acc.product_uuid,
-                    price=int(sum(p.price or 0 for p in (top, bottom, foot, acc))),
-                    currency="SAR",
-                    formal=(coll.name == "Formal"),
-                ))
+def fill_arabic_names():
+    """Give every demo product an Arabic name (the boards UI is bilingual)."""
+    rows = (
+        db.session.query(Products, Category.name.label("category_name"))
+        .outerjoin(Category, Products.category_id == Category.id)
+        .filter(text("products.image_urls_original IS NOT NULL"))
+        .all()
+    )
+    filled = 0
+    for product, category_name in rows:
+        if not product.name_ar:
+            product.name_ar = arabic_product_name(product.name, category_name)
+            filled += 1
     db.session.commit()
+    print(f"  {filled} Arabic names filled")
+
+
+def reseed_collections():
+    """Rebuild the 'Made for you' boards from the demo products."""
+    created, skipped = insert_collection_item_in_db(demo_only=True)
+    print(f"  {created} boards created, {skipped} skipped")
 
 
 def write_recommendations(selected):
@@ -269,7 +269,11 @@ def main():
         db.session.commit()
 
         print("Re-seeding collections from demo products...")
-        reseed_collections(selected)
+        print("Filling Arabic names...")
+        fill_arabic_names()
+
+        print("Building 'Made for you' boards...")
+        reseed_collections()
 
         path = write_recommendations(selected)
         total = sum(len(selected[g][c]) for g in selected for c in selected[g])
