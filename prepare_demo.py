@@ -103,8 +103,8 @@ def select_products():
                 urls = source_urls(p)
                 if not urls:
                     continue
-                p_dir = os.path.join(DEMO_DIR, str(p.product_uuid))
-                already = os.path.isdir(p_dir) and len(os.listdir(p_dir)) > 0
+                already = bool(saved_images(
+                    os.path.join(DEMO_DIR, str(p.product_uuid))))
                 if already or url_alive(urls[0]):
                     picked.append(p)
                     print(f"  [{gender}/{category}] {len(picked)}/{need}  {p.name[:50]}")
@@ -116,10 +116,33 @@ def select_products():
     return selected
 
 
+def saved_images(directory):
+    """Demo images already on disk (ignores .DS_Store and other stray files)."""
+    if not os.path.isdir(directory):
+        return []
+    return sorted(f for f in os.listdir(directory) if f.endswith(".jpg"))
+
+
+def flatten_on_white(img):
+    """RGB copy of img, compositing any transparency onto white.
+
+    Brand apparel packshots are transparent PNGs; a plain .convert("RGB")
+    would map transparent pixels to black instead of the white studio
+    background the products are shot on.
+    """
+    if img.mode in ("RGBA", "LA") or (
+            img.mode == "P" and "transparency" in img.info):
+        rgba = img.convert("RGBA")
+        out = Image.new("RGB", rgba.size, (255, 255, 255))
+        out.paste(rgba, mask=rgba.split()[-1])
+        return out
+    return img.convert("RGB")
+
+
 def download_images(product):
     """Download+resize up to IMAGES_PER_PRODUCT images; returns count saved."""
     out_dir = os.path.join(DEMO_DIR, str(product.product_uuid))
-    existing = sorted(f for f in os.listdir(out_dir)) if os.path.isdir(out_dir) else []
+    existing = saved_images(out_dir)
     if existing:
         return len(existing)
     os.makedirs(out_dir, exist_ok=True)
@@ -130,8 +153,7 @@ def download_images(product):
         try:
             r = fetch(url)
             r.raise_for_status()
-            img = Image.open(BytesIO(r.content))
-            img = img.convert("RGB")
+            img = flatten_on_white(Image.open(BytesIO(r.content)))
             img.thumbnail((MAX_SIDE, MAX_SIDE))
             saved += 1
             img.save(os.path.join(out_dir, f"{saved}.jpg"), "JPEG", quality=80)
@@ -208,6 +230,8 @@ def main():
     ap.add_argument("--base-url", help="public base URL of the API, e.g. https://api.example.com")
     ap.add_argument("--restore", action="store_true",
                     help="restore original CDN image_urls and exit")
+    ap.add_argument("--redownload", action="store_true",
+                    help="delete cached demo images and fetch them again")
     args = ap.parse_args()
 
     with app.app_context():
@@ -218,6 +242,17 @@ def main():
         if not args.base_url:
             ap.error("--base-url is required (or use --restore)")
         base_url = args.base_url.rstrip("/")
+
+        if args.redownload:
+            removed = 0
+            for name in os.listdir(DEMO_DIR) if os.path.isdir(DEMO_DIR) else []:
+                d = os.path.join(DEMO_DIR, name)
+                if not os.path.isdir(d):
+                    continue
+                for f in os.listdir(d):
+                    os.remove(os.path.join(d, f))
+                    removed += 1
+            print(f"Removed {removed} cached images; they will be fetched again.")
 
         print("Selecting demo products (checking image links)...")
         selected = select_products()
