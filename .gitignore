@@ -193,3 +193,15 @@ db_export/
 .md
 *.md
 /mdfiles
+
+# --- Demo assets that MUST ship with the code (see mdfiles/DEMO_MODE.md) ---
+# They are excluded by the generic *.jpg / *.json rules above, but the demo
+# build is broken without them: the board images, the collection seed list,
+# and the fixed recommendations.
+!static/demo/**/*.jpg
+!COLLECTION_NAME.json
+!demo_recommendations.json
+# DB dumps hold user phone numbers and the full catalogue - this repo is public.
+# Copy the dump to the server directly instead (see db_dump/README.md).
+db_dump/*.dump
+!db_dump/README.md
