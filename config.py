@@ -27,6 +27,11 @@ class Config(object):
     HF_TOKEN = os.getenv("HF_TOKEN") or None
     # Which try-on Space to call: "ootd" (default) or "catvton".
     TRYON_BACKEND = os.getenv("TRYON_BACKEND") or "ootd"
+    # CatVTON has its own sampler defaults; reusing OOTD's 20 steps / 2.0
+    # guidance produces mushy, low-detail garments.
+    CATVTON_PARAM_STEPS = int(os.getenv("CATVTON_PARAM_STEPS") or 50)
+    CATVTON_PARAM_GUIDANCE_SCALE = float(os.getenv("CATVTON_PARAM_GUIDANCE_SCALE") or 2.5)
+    CATVTON_PARAM_SEED = int(os.getenv("CATVTON_PARAM_SEED") or 42)
     # Origin used to build public /static/ URLs. Empty -> taken from the
     # incoming request, which is right behind nginx.
     PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL") or None

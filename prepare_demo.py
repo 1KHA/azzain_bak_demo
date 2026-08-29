@@ -35,6 +35,7 @@ from models.banner import Banner
 from models.collection_items import CollectionItems
 from helpers.utility import insert_collection_item_in_db
 from helpers.arabic_names import arabic_product_name
+from helpers.images import flatten_on_white
 from helpers.tryon_models import garment_for_category
 
 UA = {'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
@@ -128,22 +129,6 @@ def saved_images(directory):
     if not os.path.isdir(directory):
         return []
     return sorted(f for f in os.listdir(directory) if f.endswith(".jpg"))
-
-
-def flatten_on_white(img):
-    """RGB copy of img, compositing any transparency onto white.
-
-    Brand apparel packshots are transparent PNGs; a plain .convert("RGB")
-    would map transparent pixels to black instead of the white studio
-    background the products are shot on.
-    """
-    if img.mode in ("RGBA", "LA") or (
-            img.mode == "P" and "transparency" in img.info):
-        rgba = img.convert("RGBA")
-        out = Image.new("RGB", rgba.size, (255, 255, 255))
-        out.paste(rgba, mask=rgba.split()[-1])
-        return out
-    return img.convert("RGB")
 
 
 def download_images(product):

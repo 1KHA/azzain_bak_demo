@@ -8,12 +8,20 @@ Pick the backend with TRYON_BACKEND=ootd|catvton in .env.
 """
 import os
 import tempfile
+from io import BytesIO
 
+import requests
 from PIL import Image
 from gradio_client import Client, handle_file
 
 from config import Config
+from helpers.images import flatten_on_white, pad_to_ratio
 from logger import logger
+
+# brand CDNs reject the default python-requests agent
+UA = {"user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/108.0.0.0 Safari/537.36"}
 
 OOTD_SPACE = "levihsu/OOTDiffusion"
 CATVTON_SPACE = "zhengchong/CatVTON"
@@ -44,22 +52,51 @@ def garment_for_category(category_name, backend=None):
     return table.get((category_name or "").strip().lower())
 
 
-def _as_png(path):
-    """CatVTON's Space fails with 'cannot write mode RGBA as JPEG' when the
-    person image is a JPEG; a PNG of the same picture goes through."""
-    if str(path).lower().endswith(".png"):
-        return path
+def _temp_png(image):
     tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
     tmp.close()
-    Image.open(path).convert("RGB").save(tmp.name, "PNG")
+    image.save(tmp.name, "PNG")
     return tmp.name
+
+
+def _load(source):
+    """Open a local path or an http(s) URL as a PIL image."""
+    if str(source).startswith("http"):
+        response = requests.get(source, headers=UA, timeout=30)
+        response.raise_for_status()
+        return Image.open(BytesIO(response.content))
+    return Image.open(source)
+
+
+def _prepare_garment(source):
+    """Garment as a local PNG on a white background.
+
+    Both Spaces do `Image.open(cloth).convert("RGB")`, which turns the
+    transparent background of a brand cut-out black — a dark garment then
+    becomes invisible to the model. Compositing onto white first is what the
+    models expect and fixes it for both backends.
+    """
+    return _temp_png(flatten_on_white(_load(source)))
+
+
+def _prepare_person(source, pad=False):
+    """Person photo as a local PNG.
+
+    PNG because CatVTON's Space fails with 'cannot write mode RGBA as JPEG' on
+    a JPEG. Optionally letterboxed to 3:4 so its centre-crop does not cut off
+    the head.
+    """
+    image = flatten_on_white(_load(source))
+    if pad:
+        image = pad_to_ratio(image)
+    return _temp_png(image)
 
 
 def _run_ootd(human, cloth, garment):
     client = Client(OOTD_SPACE, token=Config.HF_TOKEN)
     result = client.predict(
-        handle_file(human),
-        handle_file(cloth),
+        handle_file(_prepare_person(human)),
+        handle_file(_prepare_garment(cloth)),
         garment,
         1,
         Config.OOTD_PARAM_STEPS,
@@ -86,17 +123,17 @@ def _blank_layer(reference_path):
 
 
 def _run_catvton(human, cloth, garment):
-    person = _as_png(human)
+    person = _prepare_person(human, pad=True)
     client = Client(CATVTON_SPACE, token=Config.HF_TOKEN)
     result = client.predict(
         person_image={"background": handle_file(person),
                       "layers": [handle_file(_blank_layer(person))],
                       "composite": handle_file(person)},
-        cloth_image=handle_file(cloth),
+        cloth_image=handle_file(_prepare_garment(cloth)),
         cloth_type=garment,
-        num_inference_steps=Config.OOTD_PARAM_STEPS,
-        guidance_scale=Config.OOTD_PARAM_GUIDANCE_SCALE,
-        seed=Config.OOTD_PARAM_SEED,
+        num_inference_steps=Config.CATVTON_PARAM_STEPS,
+        guidance_scale=Config.CATVTON_PARAM_GUIDANCE_SCALE,
+        seed=Config.CATVTON_PARAM_SEED,
         show_type="result only",
         api_name="/submit_function",
     )
