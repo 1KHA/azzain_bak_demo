@@ -31,6 +31,7 @@ from models.category import Category
 from models.product_best_for import ProductBestFor
 from models.product_brand import ProductBrand
 from models.collection_name import CollectionName
+from models.banner import Banner
 from models.collection_items import CollectionItems
 from helpers.utility import insert_collection_item_in_db
 from helpers.arabic_names import arabic_product_name
@@ -176,6 +177,40 @@ def rewrite_urls(product, base_url, count):
         for n in range(1, count + 1)]
 
 
+BANNER_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "static", "banner")
+IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".webp")
+
+
+def fill_banners(base_url):
+    """Point the home-screen banners at the images in static/banner/.
+
+    One banner row per image file, so dropping another image into the folder
+    and re-running adds a slide. Rows left without an image are removed —
+    they used to reference the unreachable S3 bucket.
+    """
+    files = sorted(f for f in os.listdir(BANNER_DIR)
+                   if f.lower().endswith(IMAGE_SUFFIXES)) \
+        if os.path.isdir(BANNER_DIR) else []
+    if not files:
+        print("  no images in static/banner, banners left unchanged")
+        return
+
+    banners = Banner.query.order_by(Banner.id).all()
+    for index, filename in enumerate(files):
+        url = f"{base_url}/static/banner/{filename}"
+        if index < len(banners):
+            banners[index].img_url = url
+        else:
+            db.session.add(Banner(img_url=url))
+    for extra in banners[len(files):]:
+        db.session.delete(extra)
+
+    db.session.commit()
+    print(f"  {len(files)} banner(s) set, "
+          f"{max(0, len(banners) - len(files))} stale row(s) removed")
+
+
 def fill_arabic_names():
     """Give every demo product an Arabic name (the boards UI is bilingual)."""
     rows = (
@@ -269,6 +304,9 @@ def main():
         db.session.commit()
 
         print("Re-seeding collections from demo products...")
+        print("Setting home banners...")
+        fill_banners(base_url)
+
         print("Filling Arabic names...")
         fill_arabic_names()
 
