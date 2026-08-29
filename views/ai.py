@@ -9,7 +9,7 @@ from database import db
 from models import TryonOutput, UserTryonInput, Products, Category
 from helpers.local_storage import (
     save_image, random_name, gradio_source, TRYON_OUTPUT)
-from helpers.tryon_categories import garment_for_category
+from helpers.tryon_models import garment_for_category, run_tryon
 from models.tryon_output import TryonOutputSchema
 # from urllib.request import urlretrieve
 from request_parsers.tryon import OOTDModelRequestBody
@@ -166,31 +166,16 @@ class RunOOTDModel(Resource):
             logger.info(f"Cloth Image: {cloth_image}")
             logger.info(f"Human Image: {human_image}")
 
-            # gradio_client 2.x renamed hf_token -> token
-            client = Client("levihsu/OOTDiffusion", token=Config.HF_TOKEN)
-            logger.info("Client Loaded")
+            result_image = run_tryon(human_image, cloth_image, garment)
+            logger.info(f"Try-on model returned: {result_image}")
 
-            result = client.predict(
-                handle_file(human_image),
-                handle_file(cloth_image),
-                garment,
-                1,
-                Config.OOTD_PARAM_STEPS,
-                Config.OOTD_PARAM_GUIDANCE_SCALE,
-                Config.OOTD_PARAM_SEED,
-                api_name=Config.OOTD_PARAM_API_NAME
-            )
-            logger.info("Response recieved from OOTD!")
-            logger.info(f"Result: {result}")
-
-            # gradio may return the result as a local temp file or as a URL
-            result_image = result[0]["image"]
+            # the model may return a local temp file or a URL
             if str(result_image).startswith("http"):
                 output_image = Image.open(
                     BytesIO(requests.get(result_image, timeout=120).content))
             else:
                 output_image = Image.open(result_image)
-            logger.info("Image received from OOTD")
+            logger.info("Image received from the try-on model")
 
             # stored next to the other static images and served by nginx
             _, output_img_url = save_image(

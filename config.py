@@ -25,6 +25,8 @@ class Config(object):
     # Hugging Face token for the OOTDiffusion Space. Optional: without it the
     # Space is called anonymously (lower queue priority, tighter rate limits).
     HF_TOKEN = os.getenv("HF_TOKEN") or None
+    # Which try-on Space to call: "ootd" (default) or "catvton".
+    TRYON_BACKEND = os.getenv("TRYON_BACKEND") or "ootd"
     # Origin used to build public /static/ URLs. Empty -> taken from the
     # incoming request, which is right behind nginx.
     PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL") or None

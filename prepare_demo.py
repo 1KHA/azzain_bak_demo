@@ -35,7 +35,7 @@ from models.banner import Banner
 from models.collection_items import CollectionItems
 from helpers.utility import insert_collection_item_in_db
 from helpers.arabic_names import arabic_product_name
-from helpers.tryon_categories import garment_for_category
+from helpers.tryon_models import garment_for_category
 
 UA = {'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
                     'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36'}
