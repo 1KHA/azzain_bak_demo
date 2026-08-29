@@ -35,6 +35,7 @@ from models.banner import Banner
 from models.collection_items import CollectionItems
 from helpers.utility import insert_collection_item_in_db
 from helpers.arabic_names import arabic_product_name
+from helpers.tryon_categories import garment_for_category
 
 UA = {'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
                     'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36'}
@@ -211,6 +212,27 @@ def fill_banners(base_url):
           f"{max(0, len(banners) - len(files))} stale row(s) removed")
 
 
+def sync_tryon_flags():
+    """Mark every product the try-on model can actually handle.
+
+    The app hides its try-on button when `tryon_available` is false, so the
+    flag has to mean exactly what the API accepts: any product whose category
+    maps to an OOTD garment class. Footwear, accessories and "Other" stay
+    false — the model cannot put shoes or a bag on a person.
+    """
+    rows = (db.session.query(Products, Category.name.label("category_name"))
+            .outerjoin(Category, Products.category_id == Category.id).all())
+    enabled = disabled = 0
+    for product, category_name in rows:
+        capable = garment_for_category(category_name) is not None
+        if bool(product.tryon_available) != capable:
+            product.tryon_available = capable
+            enabled += capable
+            disabled += not capable
+    db.session.commit()
+    print(f"  try-on enabled on {enabled} product(s), cleared on {disabled}")
+
+
 def fill_arabic_names():
     """Give every demo product an Arabic name (the boards UI is bilingual)."""
     rows = (
@@ -306,6 +328,9 @@ def main():
         print("Re-seeding collections from demo products...")
         print("Setting home banners...")
         fill_banners(base_url)
+
+        print("Syncing try-on flags...")
+        sync_tryon_flags()
 
         print("Filling Arabic names...")
         fill_arabic_names()

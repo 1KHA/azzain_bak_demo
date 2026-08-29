@@ -9,6 +9,7 @@ from database import db
 from models import TryonOutput, UserTryonInput, Products, Category
 from helpers.local_storage import (
     save_image, random_name, gradio_source, TRYON_OUTPUT)
+from helpers.tryon_categories import garment_for_category
 from models.tryon_output import TryonOutputSchema
 # from urllib.request import urlretrieve
 from request_parsers.tryon import OOTDModelRequestBody
@@ -27,12 +28,6 @@ import os
 
 ai_api = Namespace('ai', description='AI related operations')
 
-# product category name -> OOTDiffusion garment class
-OOTD_GARMENTS = {
-    "topwear": "Upper-body",
-    "bottomwear": "Lower-body",
-    "dresses": "Dress",
-}
 
 
 # @ai_api.route('/remove_bg')
@@ -130,19 +125,19 @@ class RunOOTDModel(Resource):
             if not user_input:
                 return BaseResponse.bad_request(1041, error_codes[1041])
 
+            # Any product may be tried on as long as the model can handle its
+            # category; tryon_available is only a display hint for the app and
+            # is no longer what gates the API.
             product = Products.query.filter_by(
-                id=validated_data.product_id,
-                tryon_available=True
-            ).first()
+                id=validated_data.product_id).first()
             logger.info("Product Info Loaded!")
             if not product:
                 return BaseResponse.bad_request(1023, error_codes[1023])
-            
+
             # Resolved by category name: ids differ between environments, and
             # an unmapped category used to raise UnboundLocalError below.
             category = Category.query.get(product.category_id)
-            garment = OOTD_GARMENTS.get(
-                (category.name or "").strip().lower() if category else "")
+            garment = garment_for_category(category.name if category else None)
             if garment is None:
                 logger.error(
                     f"Product {product.id} category is not try-on capable")
