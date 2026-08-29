@@ -205,3 +205,6 @@ db_export/
 # Copy the dump to the server directly instead (see db_dump/README.md).
 db_dump/*.dump
 !db_dump/README.md
+
+# Try-on uploads and results: user photos, generated at runtime - never commit
+static/tryon/

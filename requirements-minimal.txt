@@ -48,7 +48,7 @@ scipy==1.15.0
 scikit-learn==1.6.0
 
 # Try-on API client (imported by views/ai.py)
-gradio_client==1.3.0
+gradio_client==2.6.1  # 1.x cannot talk to the Gradio 6 OOTD Space
 
 # Cloud / utils
 boto3==1.34.108

@@ -3,11 +3,12 @@ from helpers.error_codes import error_codes
 from responses import BaseResponse
 from flask import request, g
 from helpers.auth import login_required
-from helpers.aws_bucket import upload_obj_to_s3
 # from tryon.remove_background import remove_background
 # from tryon.check_tryon import is_available_for_tryon
 from database import db
-from models import TryonOutput, UserTryonInput, Products
+from models import TryonOutput, UserTryonInput, Products, Category
+from helpers.local_storage import (
+    save_image, random_name, gradio_source, TRYON_OUTPUT)
 from models.tryon_output import TryonOutputSchema
 # from urllib.request import urlretrieve
 from request_parsers.tryon import OOTDModelRequestBody
@@ -25,6 +26,13 @@ import random
 import os
 
 ai_api = Namespace('ai', description='AI related operations')
+
+# product category name -> OOTDiffusion garment class
+OOTD_GARMENTS = {
+    "topwear": "Upper-body",
+    "bottomwear": "Lower-body",
+    "dresses": "Dress",
+}
 
 
 # @ai_api.route('/remove_bg')
@@ -130,12 +138,15 @@ class RunOOTDModel(Resource):
             if not product:
                 return BaseResponse.bad_request(1023, error_codes[1023])
             
-            if product.category_id == 2:
-                garment = 'Upper-body'
-            elif product.category_id == 3:
-                garment = 'Lower-body'
-            elif product.category_id == 7:
-                garment = 'Dress'
+            # Resolved by category name: ids differ between environments, and
+            # an unmapped category used to raise UnboundLocalError below.
+            category = Category.query.get(product.category_id)
+            garment = OOTD_GARMENTS.get(
+                (category.name or "").strip().lower() if category else "")
+            if garment is None:
+                logger.error(
+                    f"Product {product.id} category is not try-on capable")
+                return BaseResponse.bad_request(1042, error_codes[1042])
 
             # check if we have the tryon output for this user input
             tryon_output = TryonOutput.query.filter_by(
@@ -147,20 +158,26 @@ class RunOOTDModel(Resource):
                 response = TryonOutputSchema().dump(tryon_output)
                 return BaseResponse.success(response, "OOTD model ran successfully")
 
-            # for testing
-            # cloth_image_url = "https://azzain-bucket.s3.me-south-1.amazonaws.com/images/products/try_on/input/clothes/023a38ad-4330-45d0-942b-7185522a236b.png"
-            cloth_image_url = f"{Config.AWS_S3_BUCKET_URL}/images/products/try_on/input/clothes/{product.product_uuid}.png"
-            human_image_url = user_input.image_url
-            logger.info("Cloth Image Loaded")
-            logger.info("Human Image Loaded")
+            # The garment is the product's own photo and the human image is the
+            # photo the user just uploaded — both are served from this server,
+            # so they are handed to the Space as local files (it uploads them)
+            # rather than as URLs it would have to fetch back from us.
+            if not product.image_urls:
+                logger.error(f"Product {product.id} has no image")
+                return BaseResponse.bad_request(1023, error_codes[1023])
 
-            client = Client(
-                "levihsu/OOTDiffusion")
+            cloth_image = gradio_source(product.image_urls[0])
+            human_image = gradio_source(user_input.image_url)
+            logger.info(f"Cloth Image: {cloth_image}")
+            logger.info(f"Human Image: {human_image}")
+
+            # gradio_client 2.x renamed hf_token -> token
+            client = Client("levihsu/OOTDiffusion", token=Config.HF_TOKEN)
             logger.info("Client Loaded")
 
             result = client.predict(
-                handle_file(human_image_url),
-                handle_file(cloth_image_url),
+                handle_file(human_image),
+                handle_file(cloth_image),
                 garment,
                 1,
                 Config.OOTD_PARAM_STEPS,
@@ -171,36 +188,20 @@ class RunOOTDModel(Resource):
             logger.info("Response recieved from OOTD!")
             logger.info(f"Result: {result}")
 
-            image_path = 'https://levihsu-ootdiffusion.hf.space/file=' + result[0]["image"]
-            response = requests.get(image_path)
-            logger.info("Image Loaded from OOTD")
-            
-            # copy the output image to ./tmp/output folder
-            filename = random.randbytes(16).hex()
-            output_image_path = f"./tmp/output/{filename}.jpg"
-            webp_image = Image.open(BytesIO(response.content)).convert('RGB')
-            webp_image.save(output_image_path, 'JPEG')
-            # with open(output_image_path, 'wb') as file:
-            #     file.write(response.content)
-            logger.info("Image Downloaded")
+            # gradio may return the result as a local temp file or as a URL
+            result_image = result[0]["image"]
+            if str(result_image).startswith("http"):
+                output_image = Image.open(
+                    BytesIO(requests.get(result_image, timeout=120).content))
+            else:
+                output_image = Image.open(result_image)
+            logger.info("Image received from OOTD")
 
-            # shutil.copy(image_path, output_image_path)
-            # os.remove(image_path)
+            # stored next to the other static images and served by nginx
+            _, output_img_url = save_image(
+                output_image.convert("RGB"), TRYON_OUTPUT, random_name("jpg"))
+            logger.info(f"Try-on result saved: {output_img_url}")
 
-            output_img_obj = open(output_image_path, 'rb')
-            logger.info("Image Object Loaded")
-
-            upload_status = upload_obj_to_s3(
-                file=output_img_obj,
-                file_name=f'{filename}.jpg',
-                bucket_path='images/products/try_on/output'
-            )
-            logger.info("Image Object Uploaded to bucket")
-
-            if not upload_status:
-                return BaseResponse.internal_server_error(1040, error_codes[1040])
-
-            output_img_url = f"{Config.AWS_S3_BUCKET_URL}/images/products/try_on/output/{filename}.jpg"
             new_tryon_output = TryonOutput(
                 user_tryon_input_id=user_input.id,
                 product_id=product.id,
@@ -208,9 +209,6 @@ class RunOOTDModel(Resource):
             )
             db.session.add(new_tryon_output)
             db.session.commit()
-            output_img_obj.close()
-
-            # os.remove(output_image_path)
             return BaseResponse.success({
                 "image_url": output_img_url,
                 "product_id": product.id,
@@ -218,5 +216,7 @@ class RunOOTDModel(Resource):
             }, "OOTD model ran successfully")
 
         except Exception as e:
-            logger.error(f"Error while running OOTD model:\n {e}")
+            # log the traceback: these failures are usually upstream (Space
+            # offline, client/protocol mismatch) and str(e) is often empty
+            logger.exception(f"Error while running OOTD model: {type(e).__name__}: {e}")
             return BaseResponse.internal_server_error(1035, error_codes[1035])

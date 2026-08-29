@@ -22,6 +22,12 @@ class Config(object):
     OOTD_PARAM_GUIDANCE_SCALE = float(os.getenv("OOTD_PARAM_GUIDANCE_SCALE"))
     OOTD_PARAM_SEED = int(os.getenv("OOTD_PARAM_SEED"))
     OOTD_PARAM_API_NAME = os.getenv("OOTD_PARAM_API_NAME")
+    # Hugging Face token for the OOTDiffusion Space. Optional: without it the
+    # Space is called anonymously (lower queue priority, tighter rate limits).
+    HF_TOKEN = os.getenv("HF_TOKEN") or None
+    # Origin used to build public /static/ URLs. Empty -> taken from the
+    # incoming request, which is right behind nginx.
+    PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL") or None
 
     # AWS Bucket
     AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")

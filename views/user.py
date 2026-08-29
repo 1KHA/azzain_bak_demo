@@ -23,11 +23,10 @@ from models.user_budget import UserBudget,UserBudgetSchema
 from models import Products, FavoriteProduct, Category
 from datetime import datetime
 from pydantic import ValidationError
-from helpers.aws_bucket import upload_obj_to_s3
+from helpers.local_storage import save_upload, random_name, TRYON_HUMAN
 from helpers.pydantic_errors import get_custom_error_message
 import random
 import os
-from tryon.remove_background import remove_background
 from logger import logger
 from query.user_query import User_Query
 
@@ -300,37 +299,20 @@ class UploadUserPicture(Resource):
             return BaseResponse.bad_request(1039, error_codes[1039])
 
         file_extension = file.filename.split('.')[-1]
-        tmp_filename = random.randbytes(16).hex() + '.' + file_extension
 
-        # run the remove background model
-        file.save(f"./tmp/input/{tmp_filename}")
+        # The photo is stored as uploaded — the try-on model works from the
+        # original image, so there is no background-removal step — and served
+        # from static/ like the rest of the images.
         try:
-            logger.debug("Running background removal model")
-            output_image_path = remove_background(
-                f"./tmp/input/{tmp_filename}")
+            _, image_url = save_upload(
+                file, TRYON_HUMAN, random_name(file_extension))
         except Exception as e:
-            os.remove(f"./tmp/input/{tmp_filename}")
-            logger.error(f"Error while removing background:\n {e}")
-            return BaseResponse.internal_server_error(1035, error_codes[1035])
+            logger.error(f"Error while saving try-on input image:\n {e}")
+            return BaseResponse.internal_server_error(1040, error_codes[1040])
 
-        file_obj = open(output_image_path, 'rb')
-        bucket_path = "images/products/try_on/input/human"
-        s3_filename = output_image_path.split("/")[-1]
-        upload_status = upload_obj_to_s3(
-            file=file_obj,
-            file_name=s3_filename,
-            bucket_path=bucket_path
-        )
-        if not upload_status:
-            return BaseResponse.bad_request(1040, error_codes[1040])
-
-        os.remove(output_image_path)
-        os.remove(f"./tmp/input/{tmp_filename}")
-
-        s3_image_url = f"{Config.AWS_S3_BUCKET_URL}/{bucket_path}/{s3_filename}"
         new_user_tryon_input = UserTryonInput(
             user_id=user.id,
-            image_url=s3_image_url
+            image_url=image_url
         )
 
         db.session.add(new_user_tryon_input)
@@ -338,5 +320,5 @@ class UploadUserPicture(Resource):
 
         return BaseResponse.success({
             "user_tryon_input_id": new_user_tryon_input.id,
-            "image_url": s3_image_url
+            "image_url": image_url
         }, "image uploaded successfully")
