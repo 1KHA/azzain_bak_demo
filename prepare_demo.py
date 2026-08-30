@@ -17,6 +17,7 @@ Restore live CDN links with:  python prepare_demo.py --restore
 import argparse
 import json
 import os
+import re
 import time
 from io import BytesIO
 
@@ -197,6 +198,50 @@ def fill_banners(base_url):
           f"{max(0, len(banners) - len(files))} stale row(s) removed")
 
 
+BRANDS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "static", "brands")
+CATEGORY_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "static", "category")
+
+
+def _asset_slug(name):
+    return re.sub(r"[^a-z0-9]", "", (name or "").lower())
+
+
+def _point_at_assets(model, directory, url_prefix, label):
+    """Set img_url on rows whose name matches a file in `directory`."""
+    if not os.path.isdir(directory):
+        print(f"  no {directory}, {label} left unchanged")
+        return
+    files = {os.path.splitext(f)[0].lower(): f
+             for f in os.listdir(directory)
+             if f.lower().endswith(IMAGE_SUFFIXES)}
+    matched = missing = 0
+    for row in model.query.all():
+        filename = files.get(_asset_slug(row.name))
+        if filename:
+            row.img_url = f"{url_prefix}/{filename}"
+            matched += 1
+        else:
+            missing += 1
+            print(f"    no {label} asset for '{row.name}'")
+    db.session.commit()
+    print(f"  {matched} {label} image(s) set" +
+          (f", {missing} without an asset" if missing else ""))
+
+
+def fill_brand_and_category_images(base_url):
+    """Point brand logos and category icons at locally served files.
+
+    Both used to reference the unreachable azzain-bucket S3 (brands ended up
+    NULL entirely), so the home screen rendered blank circles above the names.
+    """
+    _point_at_assets(ProductBrand, BRANDS_DIR,
+                     f"{base_url}/static/brands", "brand")
+    _point_at_assets(Category, CATEGORY_DIR,
+                     f"{base_url}/static/category", "category")
+
+
 def sync_tryon_flags():
     """Mark every product the try-on model can actually handle.
 
@@ -313,6 +358,9 @@ def main():
         print("Re-seeding collections from demo products...")
         print("Setting home banners...")
         fill_banners(base_url)
+
+        print("Setting brand logos and category icons...")
+        fill_brand_and_category_images(base_url)
 
         print("Syncing try-on flags...")
         sync_tryon_flags()

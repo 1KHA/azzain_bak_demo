@@ -199,6 +199,8 @@ db_export/
 # build is broken without them: the board images, the collection seed list,
 # and the fixed recommendations.
 !static/demo/**/*.jpg
+!static/brands/*.png
+!static/category/*.png
 !COLLECTION_NAME.json
 !demo_recommendations.json
 # DB dumps hold user phone numbers and the full catalogue - this repo is public.
