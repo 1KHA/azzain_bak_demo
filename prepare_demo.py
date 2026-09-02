@@ -37,16 +37,20 @@ from models.collection_items import CollectionItems
 from helpers.utility import insert_collection_item_in_db
 from helpers.arabic_names import arabic_product_name
 from helpers.images import flatten_on_white
+from helpers.styles import classify_style, STYLES
 from helpers.tryon_models import garment_for_category
 
 UA = {'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
                     'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36'}
 DEMO_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "demo")
 BRANDS = ("TOM FORD", "VALENTINO")
-# Per gender, per category. Sized so every collection can hold 6 outfit boards
-# per gender without repeating a product inside one collection: the hero slot
-# draws from topwear+outwear, the other three slots need >= 6 each.
-QUOTA = {"topwear": 8, "bottomwear": 6, "footwear": 6, "outwear": 4, "accesories": 6}
+# Per gender, per STYLE (Casual/Formal/Sporty/Trendy), per category — each
+# collection tab gets its own disjoint product pool so the four tabs no longer
+# look alike. Sized for 5 boards per tab without repeating a product inside a
+# collection: hero = topwear+outwear (4+2 >= 5), other slots need >= 5 each.
+STYLE_QUOTA = {"topwear": 4, "outwear": 2,
+               "bottomwear": 5, "footwear": 5, "accesories": 5}
+CATEGORIES = tuple(STYLE_QUOTA)
 IMAGES_PER_PRODUCT = 3
 MAX_SIDE = 600
 
@@ -86,7 +90,7 @@ def candidates(gender, category):
         .join(ProductBestFor, Products.best_for_id == ProductBestFor.id)
         .join(Category, Products.category_id == Category.id)
         .join(ProductBrand, Products.brand_id == ProductBrand.id)
-        .filter(ProductBestFor.name == gender,
+        .filter(ProductBestFor.name.in_([gender, "unisex"]),
                 Category.name == category,
                 ProductBrand.name.in_(BRANDS),
                 Products.image_urls.isnot(None))
@@ -103,26 +107,49 @@ def source_urls(product):
 
 
 def select_products():
-    """Pick QUOTA products per gender+category whose first image is alive."""
+    """Pick STYLE_QUOTA products per gender+style+category with alive images.
+
+    A product's style comes from classify_style(name) — each product has
+    exactly one style, which keeps the four collection tabs disjoint.
+    """
     selected = {"men": {}, "women": {}}
     for gender in ("men", "women"):
-        for category, need in QUOTA.items():
-            picked = []
-            for p in candidates(gender, category):
-                urls = source_urls(p)
-                if not urls:
-                    continue
-                already = bool(saved_images(
-                    os.path.join(DEMO_DIR, str(p.product_uuid))))
-                if already or url_alive(urls[0]):
-                    picked.append(p)
-                    print(f"  [{gender}/{category}] {len(picked)}/{need}  {p.name[:50]}")
-                if len(picked) == need:
-                    break
-            if len(picked) < need:
-                print(f"  WARNING: only {len(picked)}/{need} for {gender}/{category}")
-            selected[gender][category] = picked
+        for style in STYLES:
+            selected[gender][style] = {}
+            for category, need in STYLE_QUOTA.items():
+                pool = [p for p in candidates(gender, category)
+                        if classify_style(p.name) == style]
+                picked = []
+                for p in pool:
+                    urls = source_urls(p)
+                    if not urls:
+                        continue
+                    already = bool(saved_images(
+                        os.path.join(DEMO_DIR, str(p.product_uuid))))
+                    if already or url_alive(urls[0]):
+                        picked.append(p)
+                        print(f"  [{gender}/{style}/{category}] "
+                              f"{len(picked)}/{need}  {p.name[:50]}")
+                    if len(picked) == need:
+                        break
+                if len(picked) < need:
+                    print(f"  WARNING: only {len(picked)}/{need} "
+                          f"for {gender}/{style}/{category}")
+                selected[gender][style][category] = picked
     return selected
+
+
+def merge_by_category(selected, gender):
+    """Flatten one gender's style buckets into {category: [products]}."""
+    merged = {category: [] for category in CATEGORIES}
+    seen = set()
+    for style in STYLES:
+        for category in CATEGORIES:
+            for p in selected[gender].get(style, {}).get(category, []):
+                if p.product_uuid not in seen:
+                    seen.add(p.product_uuid)
+                    merged[category].append(p)
+    return merged
 
 
 def saved_images(directory):
@@ -289,13 +316,14 @@ def reseed_collections():
 def write_recommendations(selected):
     recos = {"good_fit": {}}
     for gender in ("men", "women"):
-        flat = [p for cat in QUOTA for p in selected[gender][cat]]
+        merged = merge_by_category(selected, gender)
+        flat = [p for cat in CATEGORIES for p in merged[cat]]
         recos[gender] = {"demographics": [str(p.product_uuid) for p in flat]}
         for p in flat:
+            own_cat = next(c for c in CATEGORIES if p in merged[c])
             others = [str(o.product_uuid)
-                      for cat in QUOTA if cat != next(
-                          c for c in QUOTA if p in selected[gender][c])
-                      for o in selected[gender][cat][:2]]
+                      for cat in CATEGORIES if cat != own_cat
+                      for o in merged[cat][:2]]
             recos["good_fit"][str(p.product_uuid)] = others[:6]
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                         "demo_recommendations.json")
@@ -345,14 +373,19 @@ def main():
         selected = select_products()
 
         print("Downloading + resizing images...")
+        done = set()
         for gender in ("men", "women"):
-            for cat in QUOTA:
-                for p in selected[gender][cat]:
-                    count = download_images(p)
-                    if count == 0:
-                        print(f"  WARNING: no images saved for {p.name[:50]}")
-                        continue
-                    rewrite_urls(p, base_url, count)
+            for style in STYLES:
+                for cat in CATEGORIES:
+                    for p in selected[gender][style][cat]:
+                        if p.product_uuid in done:
+                            continue
+                        done.add(p.product_uuid)
+                        count = download_images(p)
+                        if count == 0:
+                            print(f"  WARNING: no images saved for {p.name[:50]}")
+                            continue
+                        rewrite_urls(p, base_url, count)
         db.session.commit()
 
         print("Re-seeding collections from demo products...")
@@ -372,8 +405,7 @@ def main():
         reseed_collections()
 
         path = write_recommendations(selected)
-        total = sum(len(selected[g][c]) for g in selected for c in selected[g])
-        print(f"Done. {total} demo products, recommendations at {path}")
+        print(f"Done. {len(done)} demo products, recommendations at {path}")
         print("Set DEMO_MODE=1 in .env and restart the API.")
 
 

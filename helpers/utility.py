@@ -7,6 +7,7 @@ import json
 import os
 from logger import logger
 from sqlalchemy import func, text
+from helpers.styles import classify_style, style_for_collection
 import pandas as pd
 import uuid
 import random
@@ -209,9 +210,28 @@ SLOT_CATEGORIES = {
     "accessories": ["accesories"],       # the table really is spelled this way
 }
 BOARD_GENDERS = ("men", "women")
-BOARDS_PER_GENDER = 6
+BOARDS_PER_GENDER = 5
 # Fixed seed: re-running the seeder reproduces the same lookbook.
 BOARD_SEED = 20260828
+
+
+def _style_choices(pool, used, style):
+    """Unused products for a slot, preferring the collection's own style.
+
+    Every collection tab (Casual/Formal/Sporty/Trendy) draws from its own
+    style bucket first — that is what makes the tabs actually different.
+    If the bucket runs dry, fall back to casual basics, then to anything,
+    so a board is never left with an empty slot.
+    """
+    unused = [p for p in pool if p.product_uuid not in used]
+    if style:
+        styled = [p for p in unused if classify_style(p.name) == style]
+        if styled:
+            return styled
+        neutral = [p for p in unused if classify_style(p.name) == "casual"]
+        if neutral:
+            return neutral
+    return unused
 
 
 def _slot_pool(slot, gender, demo_only):
@@ -271,7 +291,8 @@ def insert_collection_item_in_db(demo_only=None):
     created = skipped = 0
 
     for collection in collections:
-        formal = collection.name.strip().lower() == "formal"
+        style = style_for_collection(collection.name)
+        formal = style == "formal"
         for gender in BOARD_GENDERS:
             pools = {slot: _slot_pool(slot, gender, demo_only)
                      for slot in SLOT_CATEGORIES}
@@ -280,7 +301,7 @@ def insert_collection_item_in_db(demo_only=None):
             for _ in range(BOARDS_PER_GENDER):
                 board = {}
                 for slot in ("topwear", "bottom_wear", "foot_wear", "accessories"):
-                    choices = [p for p in pools[slot] if p.product_uuid not in used]
+                    choices = _style_choices(pools[slot], used, style)
                     if not choices:
                         board = None
                         break
